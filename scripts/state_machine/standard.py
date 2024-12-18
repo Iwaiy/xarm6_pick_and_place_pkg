@@ -73,12 +73,6 @@ class Start(smach.State):
             print("Planning succeeded. Executing plan...")
             success_exec = self.xarm.execute(plan)
             if success_exec:
-                print("Plan executed successfully.")
-
-                # アームの動作が完了した後、グリッパーを閉じる
-                if not self.gripper.close():
-                    return "loop"
-
                 rospy.loginfo("Picking work Successfully")
                 return "success"
             else:
