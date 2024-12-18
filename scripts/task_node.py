@@ -42,7 +42,7 @@ class PathseedsEncoderStateMachine:
             smach.StateMachine.add(
                 'PICK_WORK', 
                 pick_work.PickWork(['success', 'failure', 'loop']),
-                transitions={'success': 'exit', 'failure': 'exit', 'loop': 'PICK_WORK'}
+                transitions={'success': 'PICK_BACK', 'failure': 'exit', 'loop': 'PICK_WORK'}
             )
             smach.StateMachine.add(
                 'PICK_BACK',
@@ -52,13 +52,13 @@ class PathseedsEncoderStateMachine:
             smach.StateMachine.add(
                 'PLACE_WORK', 
                 place_work.PlaceWork(['success', 'failure', 'loop']),
-                transitions={'success': 'PLACE_BACK', 'failure': 'exit', 'loop': 'PLACE_WORK'}
+                transitions={'success': 'START', 'failure': 'exit', 'loop': 'PLACE_WORK'}
             )
-            smach.StateMachine.add(
-                'PLACE_BACK',
-                place_work.PLACE_BACK(['success', 'failure', 'loop']),
-                transitions={'success': 'START', 'loop': 'PLACE_BACK', 'failure': 'exit'}
-            )
+            # smach.StateMachine.add(
+            #     'PLACE_BACK',
+            #     place_work.PLACE_BACK(['success', 'failure', 'loop']),
+            #     transitions={'success': 'START', 'loop': 'PLACE_BACK', 'failure': 'exit'}
+            # )
             smach.StateMachine.add(
                 'exit',
                 standard.Exit(['success', 'failure']),

@@ -9,6 +9,7 @@ import smach
 import moveit_commander
 from moveit_commander import RobotCommander, MoveGroupCommander
 from moveit_msgs.msg import ExecuteTrajectoryActionGoal
+from node.grasp_control import GraspControl
 
 rospack = rospkg.RosPack()
 package_path = rospack.get_path('xarm6_pick_and_place_pkg')  # パッケージ名を指定
@@ -17,160 +18,59 @@ package_path = rospack.get_path('xarm6_pick_and_place_pkg')  # パッケージ�
 class PlaceWork(smach.State):
     def __init__(self, outcomes):
         # Declare input_keys and output_keys
-        smach.State.__init__(self, outcomes=outcomes, input_keys=['start_time', 'plan_time', 'plan_size'], output_keys=['start_time', 'plan_time', 'plan_size'])
+        smach.State.__init__(self, outcomes=outcomes)
+
         self.robot = RobotCommander()
         self.xarm = MoveGroupCommander("xarm6")
-        self.try_count = 0
-        # self.goal_joint_angles = rospy.get_param("~Joint")
-        self.subscriber = None  # Initialize the subscriber as None
-        self.msg = None
-
-    def execute_trajectory_callback(self, msg):
-        # Callback to handle the subscribed data
-        rospy.loginfo("Received trajectory goal data")
-        self.msg = msg
+        self.gripper = GraspControl()
 
     def execute(self, userdata):
-        # init
-        self.try_count = 0
-        self.subscriber = None
-        self.msg = None
-        
-        # get the current phase
-        self.phase = rospy.get_param("phase", "Exception")
-        rospy.loginfo(f"Current phase: {self.phase}")
-        if self.phase == "Initial_Phase":
-            # specify the file path
-            file_path = os.path.join(package_path, 'pathseeds', 'new_ex', 'pathseed_straight.txt')
-            print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-            print("parameters set")
-            print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-            # set Stomp parameters
-            rospy.set_param("move_group/stomp/xarm6/optimization/num_timesteps", 60)
-            rospy.set_param("move_group/stomp/xarm6/optimization/num_iterations", 30)
-            rospy.set_param("move_group/stomp/xarm6/optimization/num_iterations_after_valid", 10)
-            rospy.set_param("move_group/stomp/xarm6/optimization/num_rollouts", 30)
-            rospy.set_param("move_group/stomp/xarm6/optimization/max_rollouts", 30)
-            rospy.set_param("move_group/stomp/xarm6/optimization/initialization_method", 1)
-            rospy.set_param("move_group/stomp/xarm6/optimization/control_cost_weight", 0.0)
-            # Subscribe only if in the Initial_Phase
-            if not self.subscriber:
-                self.subscriber = rospy.Subscriber("/execute_trajectory/goal", ExecuteTrajectoryActionGoal, self.execute_trajectory_callback)
-                rospy.loginfo("Subscribed to /execute_trajectory/goal")
+        try:
+            # self.xarm.set_max_velocity_scaling_factor(0.1)  # 10% の速度
+            # self.xarm.set_max_acceleration_scaling_factor(0.1)  # 10% の加速度
+            self.xarm.stop()
 
-            # create the directories if they do not exist
-            if not os.path.exists(os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'trajectories')):
-                os.makedirs(os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'trajectories'), exist_ok=True)
-        elif self.phase == "Implement_Phase":
-            try:
-                # specify the file path
-                file_path = os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'pathseed_place.txt')
-                print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-                print("parameters set")
-                print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-                # set Stomp parameters
-                rospy.set_param("move_group/stomp/xarm6/optimization/num_timesteps", 10)
-                rospy.set_param("move_group/stomp/xarm6/optimization/num_iterations", 5)
-                rospy.set_param("move_group/stomp/xarm6/optimization/num_iterations_after_valid", 10)
-                rospy.set_param("move_group/stomp/xarm6/optimization/num_rollouts", 10)
-                rospy.set_param("move_group/stomp/xarm6/optimization/max_rollouts", 30)
-                rospy.set_param("move_group/stomp/xarm6/optimization/initialization_method", 1)
-                rospy.set_param("move_group/stomp/xarm6/optimization/control_cost_weight", 0.0)
-            except FileNotFoundError:
-                rospy.logerr("File not found")
-                return 'failure'
-        else:
-            rospy.logerr("Invalid phase")
-            return 'failure'
+            # ゴールの設定(関節角度で指定)0.01342425 -0.8442685  -0.29798153  0.03872918  1.15796757  0.03068345
+            #fixed_joint_values = [0.0027496605180203915, 0.104049913585186, -1.1940333843231201, 0.027469761669635773, 1.089946985244751, 0.008956530131399632]
+            fixed_joint_values = [-0.724, 0.632, -1.553, 0.0, 0.921, 0.922]
 
-        # decode the pathseed file
-        decoder = Decoder()
-        start_joint_values = self.xarm.get_current_joint_values()
-        goal_joint_values = self.goal_joint_angles["PlacePoint"]
-        generated_path = decoder.generate_path(file_path, start_joint_values, goal_joint_values)
+            # fixed_joint_values = [0.01342425, -0.6442685, -0.29798153, 0.03872918, 1.00, 0.03068345]
 
-        # specify the pathseed file
-        pathseed_params = rospy.set_param('/pathseed_param', {
-            'path_data': generated_path,
-            'reverse': False  # デフォルト値
-        })
+            # 現在のジョイント値（スタート状態）を取得して表示
+            current_joint_values = self.xarm.get_current_joint_values()
+            print(f"Current joint values (Start): {current_joint_values}")
 
-        rospy.loginfo('Going to place point')
-        # スタート位置の設定(関節角度で指定)
-        # fixed_joint_values = self.goal_joint_angles["PlacePoint"]
-        # self.xarm.set_start_state_to_current_state()
-        # self.xarm.set_joint_value_target(fixed_joint_values)
-        self.xarm.set_start_state_to_current_state()
-        self.xarm.set_joint_value_target(goal_joint_values)
+            # ゴール状態（目標ジョイント値）を表示
+            print(f"Target joint values (Goal): {fixed_joint_values}")
 
-        # # set Stomp parameters
-        # rospy.set_param("move_group/stomp/xarm6/optimization/num_timesteps", 6)
-        # rospy.set_param("move_group/stomp/xarm6/optimization/num_iterations", 6)
-        # rospy.set_param("move_group/stomp/xarm6/optimization/num_iterations_after_valid", 10)
-        # rospy.set_param("move_group/stomp/xarm6/optimization/num_rollouts", 6)
-        # rospy.set_param("move_group/stomp/xarm6/optimization/max_rollouts", 15)
-        # rospy.set_param("move_group/stomp/xarm6/optimization/initialization_method", 1)
-        # rospy.set_param("move_group/stomp/xarm6/optimization/control_cost_weight", 0.0)
+            # スタート状態を現在の状態に設定
+            self.xarm.set_start_state_to_current_state()
+            self.xarm.set_start_state_to_current_state()
+            
 
-        # パラメータの設定
-        noise_generator_params = [
-            {
-                'class': 'stomp_moveit/NormalDistributionSampling',
-                'stddev': [0.001, 0.001, 0.008, 0.008, 0.005, 0.001]
-            }
-        ]
-        # Cost function parameters
-        cost_functions = [
-            {
-                'class': 'stomp_moveit/CollisionCheck',
-                'collision_penalty': 100.0,
-                'cost_weight': 100.0,
-                'kernel_window_percentage': 0.2,
-                'longest_valid_joint_move': 0.05
-            }
-        ]
+            # ゴール状態を設定
+            self.xarm.set_joint_value_target(fixed_joint_values)
 
-        # Set the parameters
-        rospy.set_param('/move_group/stomp/xarm6/task/cost_functions', cost_functions)
+            # プランニング
+            success, plan, _, _ = self.xarm.plan()
+            if not success:
+                print("Planning failed.")
+                return "loop"
 
-        # Confirm the parameters have been set correctly
-        print(rospy.get_param('/move_group/stomp/xarm6/task/cost_functions'))
-
-        # rosparamに設定
-        rospy.set_param('/move_group/stomp/xarm6/task/noise_generator', noise_generator_params)
-
-        # 設定した内容を確認
-        rospy.loginfo("Noise generator parameters set: %s", rospy.get_param('/move_group/stomp/xarm6/task/noise_generator'))
-
-        start_plan = rospy.Time.now()
-        # プランニング
-        self.xarm.set_goal_joint_tolerance(0.1)  # Increase the goal tolerance for joint position
-        success, plan, _, _ = self.xarm.plan()
-        
-        end_plan = rospy.Time.now()
-
-        userdata.plan_time += (end_plan - start_plan).to_sec()
-        plan_size = len(plan.joint_trajectory.points)
-        userdata.plan_size += plan_size
-
-        # print(plan)
-
-        if success:
-            rospy.loginfo('Planning succeeded, executing plan')
-            self.xarm.execute(plan)
-        else:
-            print("Planning failed.")
-            if self.try_count < 3:
-                    self.try_count += 1
-                    return 'failure'
-            return 'failure'
-        
-        if self.phase == "Initial_Phase":
-            # write the execute_trajectory callback in the traj_pick.txt file
-            with open(os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'trajectories', 'traj_place.txt'), 'w') as file:
-                file.write(str(self.msg))
-            rospy.loginfo("Trajectory data written to traj_place.txt")
-        return 'success'
+            print("Planning succeeded. Executing plan...")
+            success_exec = self.xarm.execute(plan)
+            if success_exec:
+                # グリッパーを開く
+                if not self.gripper.open():
+                    return "loop"
+                rospy.loginfo("PlaceWork succeeded.")
+                return "success"
+            else:
+                print("Execution failed.")
+                return "loop"
+        except Exception as e:
+            print(f"Error in execute: {e}")
+            return "loop"
     
 
 class PLACE_BACK(smach.State):

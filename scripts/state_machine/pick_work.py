@@ -327,53 +327,54 @@ class PickWork(smach.State):
 
 class PICK_BACK(smach.State):
     def __init__(self, outcomes):
-        smach.State.__init__(self, outcomes=outcomes, input_keys=['start_time', 'plan_time', 'plan_size'], output_keys=['start_time', 'plan_time', 'plan_size'])
+        # Declare input_keys and output_keys
+        smach.State.__init__(self, outcomes=outcomes)
+
         self.robot = RobotCommander()
         self.xarm = MoveGroupCommander("xarm6")
-        self.try_count = 0
-        # self.goal_joint_angles = rospy.get_param("~Joint")
+        self.gripper = GraspControl()
 
     def execute(self, userdata):
-        print("------------------------------------")
-        print("Executing PickBack")
-        goal_joint_values = self.goal_joint_angles["Start"]
-
-        # specify the pathseed file
-        pathseed_params = rospy.get_param('/pathseed_param', {})
-        # 逆再生を使用
-        # pathseed_params['path_data'] = generated_path
-        pathseed_params['reverse'] = True
-
-        # 変更後のパラメータを再設定
-        rospy.set_param('/pathseed_param', pathseed_params)
-
-        rospy.loginfo('Going back to start point')
-        self.xarm.set_joint_value_target(goal_joint_values)
-
         try:
-            start_plan = rospy.Time.now()
+            # self.xarm.set_max_velocity_scaling_factor(0.1)  # 10% の速度
+            # self.xarm.set_max_acceleration_scaling_factor(0.1)  # 10% の加速度
+            self.xarm.stop()
+
+            # ゴールの設定(関節角度で指定)0.01342425 -0.8442685  -0.29798153  0.03872918  1.15796757  0.03068345
+            #fixed_joint_values = [0.0027496605180203915, 0.104049913585186, -1.1940333843231201, 0.027469761669635773, 1.089946985244751, 0.008956530131399632]
+            fixed_joint_values = [0.002444781828671694, 0.07742192596197128, -1.2735952138900757, 0.02975347451865673, 1.1962307691574097, 0.010912355966866016]
+
+            # fixed_joint_values = [0.01342425, -0.6442685, -0.29798153, 0.03872918, 1.00, 0.03068345]
+
+            # 現在のジョイント値（スタート状態）を取得して表示
+            current_joint_values = self.xarm.get_current_joint_values()
+            print(f"Current joint values (Start): {current_joint_values}")
+
+            # ゴール状態（目標ジョイント値）を表示
+            print(f"Target joint values (Goal): {fixed_joint_values}")
+
+            # スタート状態を現在の状態に設定
+            self.xarm.set_start_state_to_current_state()
+            self.xarm.set_start_state_to_current_state()
+            
+
+            # ゴール状態を設定
+            self.xarm.set_joint_value_target(fixed_joint_values)
+
             # プランニング
-            self.xarm.set_goal_joint_tolerance(0.1)  # Increase the goal tolerance for joint position
-            success_plan, plan, _, _ = self.xarm.plan()
-            end_plan = rospy.Time.now()
-
-            userdata.plan_time += (end_plan - start_plan).to_sec()
-            plan_size = len(plan.joint_trajectory.points)
-            userdata.plan_size += plan_size
-
-            if success_plan:
-                rospy.loginfo('Planning succeeded, executing plan')
-                success_execute = self.xarm.execute(plan)
-                if success_execute is True:
-                    return 'success'
-                else:
-                    return 'failure'
-            else:
+            success, plan, _, _ = self.xarm.plan()
+            if not success:
                 print("Planning failed.")
-                if self.try_count < 3:
-                    self.try_count += 1
-                    return 'loop'
-                return 'failure'
+                return "loop"
+
+            print("Planning succeeded. Executing plan...")
+            success_exec = self.xarm.execute(plan)
+            if success_exec:
+                rospy.loginfo("Picking work Successfully")
+                return "success"
+            else:
+                print("Execution failed.")
+                return "loop"
         except Exception as e:
-            print(e)
-            return 'failure'
+            print(f"Error in execute: {e}")
+            return "loop"
