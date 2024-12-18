@@ -1,0 +1,11 @@
+build/
+**/__pycache__/
+
+# Ignore pathseed folder
+pathseeds/
+
+# Ignore the generated files
+decoded_data/
+
+# Ignore the csv files
+*.csv
