@@ -14,7 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   moveit_core
   moveit_ros_planning_interface
-  #stomp_moveit
+  stomp_moveit
   message_generation
 )
 
@@ -54,6 +54,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## Generate messages in the 'msg' folder
 add_message_files(
   FILES
+  PathSeed.msg
 )
 
 ## Generate services in the 'srv' folder

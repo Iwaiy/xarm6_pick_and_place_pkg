@@ -2,6 +2,28 @@
     <!-- ################### Arguments ################### -->
     <arg name="add_gripper" default="true" />
     <arg name="sim" default="false" />
+    <!-- pipeline is stomp or ompl -->
+    <arg name="pipeline" default="stomp" />
+    <!-- use_pathseed -->
+    <arg name="use_pathseed" default="true" />
+    <!-- Load pathseed file -->
+    <arg name="pathseed_file" default="$(find xarm6_pick_and_place_pkg)/pathseeds/pathseed1.txt" />
+    <arg name="start_state" default="PICK_WORK" />
+    <arg name="start_phase" default="Initial_Phase" />
+    <arg name="is_finish_task" default="false" />
+
+    <!-- ################### Parameters ###################-->
+    <rosparam param="/pathseed_param">
+        filename: "$(arg pathseed_file)"
+        path_data: ''
+        reverse: false
+    </rosparam>
+    <!-- use_pathseed -->
+    <param name="use_pathseed" value="$(arg use_pathseed)" />
+    <param name="start_state" value="$(arg start_state)" />
+    <param name="start_phase" value="$(arg start_phase)" />
+    <param name="pipeline" value="$(arg pipeline)" />
+    <param name="is_finish_task" value="$(arg is_finish_task)" />
 
     <!-- ################### Simulation Launch ################### -->
     <group if="$(arg sim)">
@@ -21,25 +43,39 @@
         <!-- <include file="$(find realsense2_camera)/launch/rs_camera.launch" /> -->
     </group>
 
+    <!-- ################### Pipeline ################### -->
+    <!-- Planning Functionality -->
+    <include ns="move_group" file="$(find xarm6_gripper_moveit_config)/launch/planning_pipeline.launch.xml">
+        <arg name="pipeline" value="$(arg pipeline)" />
+    </include>
+
     <!-- ################### Common Nodes ################### -->
     <!-- Point Cloud Transformation -->
-    <!-- <node name="camera_to_xarm6eef_broadcaster" 
-          pkg="MaskSVD" 
+    <node name="camera_to_xarm6eef_broadcaster" 
+          pkg="mask_svd" 
           type="camera_to_xarm6eef_broadcaster.py" 
           output="screen"
-          cwd="node"/> -->
+          cwd="node"/>
 
     <!-- Point Cloud Processing -->
-    <!-- <node name="point_cloud_processor" 
+    <node name="point_cloud_processor" 
           pkg="mask_svd" 
           type="point_cloud_processor" 
           output="screen"
-          cwd="node"/> -->
+          cwd="node"/>
 
     <!-- Pose Estimation -->
-    <!-- <node name="kalman_estimate" 
-          pkg="MaskSVD" 
+    <node name="kalman_estimate" 
+          pkg="mask_svd" 
           type="kalman_estimate.py" 
           output="screen"
-          cwd="node"/> -->
+          cwd="node"/>
+
+    <!-- ################### Pathseed Publisher ################### -->
+    <node name="pathseed_pub" pkg="xarm6_pick_and_place_pkg" type="pathseed_pub.py"/>
+    
+    <!-- ################### Task Nodes ################### -->
+    <node name="task_node" pkg="xarm6_pick_and_place_pkg" type="task_node.py" output="screen">
+        <rosparam command="load" file="$(find xarm6_pick_and_place_pkg)/io/config/param.yaml" />
+    </node>
 </launch>

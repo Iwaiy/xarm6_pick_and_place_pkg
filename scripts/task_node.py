@@ -10,6 +10,7 @@ from state_machine import (
     recog,
     pick_work,
     place_work,
+    update_pathseed,
 )
 
 
@@ -25,9 +26,9 @@ class PathseedsEncoderStateMachine:
         with self.state_machine:
             # Add states to the state machine
             smach.StateMachine.add(
-                'WaitForStart', 
-                standard.Wait4Start(['success', 'failure', 'loop']),
-                transitions={'success': 'START', 'failure': 'exit', 'loop': 'WaitForStart'}
+                'InitialSettings', 
+                standard.InitialSettings(['success', 'failure', 'loop']),
+                transitions={'success': 'START', 'failure': 'exit', 'loop': 'InitialSettings'}
             )
             smach.StateMachine.add(
                 'START',
@@ -51,14 +52,19 @@ class PathseedsEncoderStateMachine:
             )
             smach.StateMachine.add(
                 'PLACE_WORK', 
-                place_work.PlaceWork(['success', 'failure', 'loop']),
-                transitions={'success': 'START', 'failure': 'exit', 'loop': 'PLACE_WORK'}
+                place_work.PlaceWork(['finish', 'failure', 'loop', 'update']),
+                transitions={'finish': 'InitialSettings', 'failure': 'exit', 'loop': 'PLACE_WORK', 'update': 'UPDATE_PATHSEED'}
             )
             # smach.StateMachine.add(
             #     'PLACE_BACK',
             #     place_work.PLACE_BACK(['success', 'failure', 'loop']),
             #     transitions={'success': 'START', 'loop': 'PLACE_BACK', 'failure': 'exit'}
             # )
+            smach.StateMachine.add(
+                'UPDATE_PATHSEED',
+                update_pathseed.UpdatePathSeed(['success', 'failure']),
+                transitions={'success': 'START', 'failure': 'exit'}
+            )
             smach.StateMachine.add(
                 'exit',
                 standard.Exit(['success', 'failure']),

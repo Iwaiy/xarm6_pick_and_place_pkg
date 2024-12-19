@@ -16,12 +16,15 @@ from tf2_msgs.msg import TFMessage
 from geometry_msgs.msg import TransformStamped
 from geometry_msgs.msg import Pose, PoseStamped
 from geometry_msgs.msg import Point, Vector3
+from std_msgs.msg import Bool
 import smach
 import moveit_commander
 from moveit_commander import RobotCommander, MoveGroupCommander
 from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
 from moveit_msgs.msg import ExecuteTrajectoryActionGoal
 import time
+from node.decode import Decoder
+from node.compute_ik import ComputeIK
 
 from geometry_msgs.msg import Pose
 import tf.transformations as tft
@@ -41,6 +44,8 @@ class PickWork(smach.State):
         self.robot = RobotCommander()
         self.xarm = MoveGroupCommander("xarm6")
         self.gripper = GraspControl()
+        self.compute_ik = ComputeIK()
+
         self.try_count = 0
         # self.goal_joint_angles = rospy.get_param("~Joint")
         self.subscriber = None  # Initialize the subscriber as None
@@ -50,7 +55,17 @@ class PickWork(smach.State):
 
         self.frame_id = None
 
+        # parameters
+        self.params = rospy.get_param("~Params")
+        self.pipeline = rospy.get_param("pipeline", "stomp")
+
+        # Publisher
+        self.enable_pathseed_pub = rospy.Publisher("pathseed_control", Bool, queue_size=10)
+        rate = rospy.Rate(50)
+
         # Subscriber
+        self.subscriber = rospy.Subscriber("/execute_trajectory/goal", ExecuteTrajectoryActionGoal, self.execute_trajectory_callback)
+
         #TFブロードキャスト
         self.br = tf2_ros.StaticTransformBroadcaster()
         self.tf_subscriber = rospy.Subscriber("/tf_static", TFMessage, self.tf_static_callback, queue_size=100000)
@@ -58,6 +73,42 @@ class PickWork(smach.State):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         self.tf_buffer.clear()
 
+    def execute_trajectory_callback(self, msg):
+        # Callback to handle the subscribed data
+        rospy.loginfo("Received trajectory goal data")
+        # if self.phase == "Initial_Phase":
+        #     # write the execute_trajectory callback in the traj_pick.txt file
+        #     with open(os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'trajectories', 'traj_pick.txt'), 'w') as file:
+        #         file.write(str(msg))
+        #     rospy.loginfo("Trajectory data written to traj_pick.txt")
+        self.msg = msg
+
+    def set_stomp_params(self, phase: dict) -> dict:
+        """
+        Set the Stomp parameters
+        Args:
+            phase (dict): The phase parameters
+        Returns:
+            dict: The phase parameters
+        """
+        try:
+            # set Stomp parameters
+            for param_name in phase.keys():
+                if param_name == 'stddev':
+                    noise_generator_params = [
+                        {
+                            'class': 'stomp_moveit/NormalDistributionSampling',
+                            'stddev': phase['stddev']
+                        }
+                    ]
+                    # rosparamに設定
+                    rospy.set_param('/move_group/stomp/xarm6/task/noise_generator', noise_generator_params)
+                else:
+                    rospy.set_param(f"move_group/stomp/xarm6/optimization/{param_name}", phase[param_name])
+            return phase
+        except Exception as e:
+            rospy.logerr(f"Error occurred: {e}")
+            return None
 
     def tf_static_callback(self, msg):
         # TFメッセージを受信した際に呼ばれる
@@ -163,6 +214,13 @@ class PickWork(smach.State):
         # init
         self.try_count = 0
         self.msg = None
+
+        # settings
+        # xarmの速度と加速度を設定
+        self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
+        self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
+        env = rospy.get_param("env", "task1")
+
         print("------------------------------------")
         print("Executing PickWork")
         # 姿勢推定によるtargetのPose取得 (Recognition)
@@ -264,15 +322,123 @@ class PickWork(smach.State):
 
         # Move to the target position
         print("=======================")
-        self.xarm.set_start_state_to_current_state()
-        self.xarm.set_pose_target(target_pose)
-        success, plan, _, _ = self.xarm.plan()
-        print(self.xarm.get_planning_frame())
-        if success:
-            self.xarm.execute(plan)
-        else:
-            print("Planning failed.")
+        # get the current phase
+        self.phase = rospy.get_param("phase", "Initial_Phase")
+        rospy.loginfo(f"Current phase: {self.phase}")
 
+        # PRmethodを使用する場合
+        print(f"Use Pathseed: {rospy.get_param('use_pathseed', False)}")
+        print(f"Pipeline: {self.pipeline}")
+        print(f"Phase: {self.phase}")
+        if rospy.get_param("use_pathseed", False) is True and self.pipeline == "stomp":
+            print("|====================================|")
+            print("|========= Using PR method ==========|") 
+            print("|====================================|")
+            # publish the pathseed
+            rospy.loginfo("Publishing pathseed")
+            self.enable_pathseed_pub.publish(Bool(True))
+
+            rospy.set_param("is_publish_pathseed", False)
+            if self.phase == "Initial_Phase":
+                # specify the template pathseed file
+                try:
+                    file_path = os.path.join(package_path, 'pathseeds', 'task1', 'pathseed1.txt')
+                except FileNotFoundError:
+                    rospy.logerr("File not found")
+                    self.try_count = 0
+                    return 'failure'
+                # set Stomp parameters
+                stomp_params = self.params[env]["StompParams"]['PickPoint'][self.phase]
+                self.set_stomp_params(stomp_params)
+                rospy.loginfo(f"Stomp parameters set: {stomp_params}")
+            elif self.phase == "Implement_Phase":
+                try:
+                    # specify the update pathseed file
+                    file_path = os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'pathseed_pick.txt')
+                except FileNotFoundError:
+                    rospy.logerr("File not found")
+                    self.try_count = 0
+                    return 'failure'
+                # set Stomp parameters
+                stomp_params = self.params[env]["StompParams"]['PickPoint'][self.phase]
+                self.set_stomp_params(stomp_params)
+                rospy.loginfo(f"Stomp parameters set: {stomp_params}")
+            else:
+                print(f"Phase: {self.phase} is not recognized.")
+                return 'failure'
+            joint_values = self.compute_ik.inverse_kinematics(
+                x=target_pose.position.x, y=target_pose.position.y, z=target_pose.position.z, 
+                wx=target_pose.orientation.x, wy=target_pose.orientation.y, wz=target_pose.orientation.z, ww=target_pose.orientation.w
+            )
+            if joint_values is None:
+                rospy.logerr("Failed to compute IK.")
+                return 'failure'
+            goal_joint_values = joint_values
+            start_joint_values = self.xarm.get_current_joint_values()
+            # decode the pathseed file
+            decoder = Decoder()
+            print(f"File path: {file_path}")
+            print(f"Start joint values: {start_joint_values}")
+            print(f"Goal joint values: {goal_joint_values}")
+            generated_path = decoder.generate_path(file_path, start_joint_values, goal_joint_values)
+            print(f"Generated path: {generated_path}")
+            # specify the pathseed file
+            pathseed_params = rospy.set_param('/pathseed_param', {
+                'path_data': generated_path,
+                'reverse': False  # デフォルト値
+            })
+
+            # set the target joint values
+            self.xarm.set_start_state_to_current_state()
+            self.xarm.set_joint_value_target(joint_values)
+        # default STOMPの場合
+        elif self.pipeline == "stomp":
+            print("|====================================|")
+            print("|========= Using STOMP method =======|")
+            print("|====================================|")
+
+            # set the Stomp parameters (defaultSTOMP: always Initial_Phase parameters)
+            stomp_params = self.params[env]["StompParams"]['PickPoint']["Initial_Phase"]
+            self.set_stomp_params(stomp_params)
+            rospy.loginfo(f"Stomp parameters: {stomp_params}")
+
+            # set the target pose
+            self.xarm.set_start_state_to_current_state()
+            self.xarm.set_pose_target(target_pose)
+        # OMPL (RRT-connect)の場合
+        else:
+            print("|====================================|")
+            print("|========= Using OMPL method =========|")
+            print("|====================================|")
+            self.xarm.set_start_state_to_current_state()
+            self.xarm.set_pose_target(target_pose)
+
+        rospy.sleep(3)
+        rospy.loginfo("Planning...")
+        # プランニング
+        try:
+            success, plan, _, _ = self.xarm.plan()
+            print(self.xarm.get_planning_frame())
+            if success:
+                success_exe = self.xarm.execute(plan)
+                if success_exe:
+                    # create the directories if they do not exist
+                    if not os.path.exists(os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'trajectories')):
+                        os.makedirs(os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'trajectories'), exist_ok=True)
+                    with open(os.path.join(package_path, 'pathseeds', 'update_pathseeds', 'trajectories', 'traj_pick.txt'), 'w') as file:
+                        file.write(str(self.msg))
+                    rospy.loginfo("Trajectory data written to traj_pick.txt")
+            else:
+                print("Planning failed.")
+                if self.try_count < 3:
+                    self.try_count += 1
+                    return 'loop'
+                return 'failure'
+        except Exception as e:
+            print(e)
+            return 'failure'
+        
+        # debug
         eef_pose = self.xarm.get_current_pose().pose  # MoveItからのPose  (world座標系)
         base_frame = self.xarm.get_planning_frame()  # MoveItの基準座標系
         rospy.loginfo(f"MoveIt Planning Frame: {base_frame}")
@@ -292,89 +458,118 @@ class PickWork(smach.State):
         rospy.loginfo(f"target_pose:{target_pose}")
         print("=======================")
 
+        # グリッパーを閉じる
         self.gripper.close()
 
-        
-
-        
         return 'success'
-        # try:
-        #     # プランニング
-        #     self.xarm.set_goal_joint_tolerance(0.01)  # Increase the goal tolerance for joint position
-        #     success_plan, plan, _, _ = self.xarm.plan()
-            
-        #     if success_plan:
-        #         rospy.loginfo('Planning succeeded, executing plan')
-        #         success_execute = self.xarm.execute(plan)
-            
-        #         if success_execute is True:
-        #             rospy.loginfo('Grasping')
-        #             self.gripper_control(0)
-        #             return 'success'
-        #         else:
-        #             return 'failure'
-        #     else:
-        #         print("Planning failed.")
-        #         if self.try_count < 3:
-        #             self.try_count += 1
-        #             return 'loop'
-        #         return 'failure'
-        
-        # except Exception as e:
-        #     print(e)
-        #     return 'failure'
-        
+
 
 class PICK_BACK(smach.State):
     def __init__(self, outcomes):
-        # Declare input_keys and output_keys
-        smach.State.__init__(self, outcomes=outcomes)
-
+        smach.State.__init__(self, outcomes=outcomes, input_keys=['start_time', 'plan_time', 'plan_size', 'plan_info'], output_keys=['start_time', 'plan_time', 'plan_size', 'plan_info'])
         self.robot = RobotCommander()
         self.xarm = MoveGroupCommander("xarm6")
         self.gripper = GraspControl()
+        self.params = rospy.get_param("~Params")
+        self.pipeline = rospy.get_param("pipeline", "ompl")
+        self.try_count = 0
+
+    def set_stomp_params(self, phase: dict) -> dict:
+        """
+        Set the Stomp parameters
+        Args:
+            phase (dict): The phase parameters
+        Returns:
+            dict: The phase parameters
+        """
+        try:
+            # set Stomp parameters
+            for param_name in phase.keys():
+                if param_name == 'stddev':
+                    noise_generator_params = [
+                        {
+                            'class': 'stomp_moveit/NormalDistributionSampling',
+                            'stddev': phase['stddev']
+                        }
+                    ]
+                    # rosparamに設定
+                    rospy.set_param('/move_group/stomp/xarm6/task/noise_generator', noise_generator_params)
+                else:
+                    rospy.set_param(f"move_group/stomp/xarm6/optimization/{param_name}", phase[param_name])
+            return phase
+        except Exception as e:
+            rospy.logerr(f"Error occurred: {e}")
+            return None
 
     def execute(self, userdata):
+        print("------------------------------------")
+        print("Executing PickBack")
+        rospy.loginfo(f"Planning pipeline: {self.pipeline}")
+        # settings
+        # xarmの速度と加速度を設定
+        self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
+        self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
+        start_phase = rospy.get_param("start_phase", "Initial_Phase")
+        rospy.set_param("phase", start_phase)
+        rospy.loginfo(f"Phase: {start_phase}")
+        env = rospy.get_param("env", "task1")
+        if self.pipeline == "stomp":
+            stomp_params = self.params[env]["StompParams"]
+            self.set_stomp_params(stomp_params)
+            rospy.loginfo(f"Stomp parameters: {stomp_params}")
+        
+        goal_joint_values = self.params[env]["Joint"]["Start"]["Cspace"]
+        
+        if self.pipeline == "stomp" and rospy.get_param("use_pathseed", False) is True:
+            # specify the pathseed file
+            pathseed_params = rospy.get_param('/pathseed_param', {})
+            # 逆再生を使用
+            # pathseed_params['path_data'] = generated_path
+            pathseed_params['reverse'] = True
+
+            # 変更後のパラメータを再設定
+            rospy.set_param('/pathseed_param', pathseed_params)
+
+            print("|====================================|")
+            print("|===== Using PR method (Reverse)=====|") 
+            print("|====================================|")
+
         try:
-            # self.xarm.set_max_velocity_scaling_factor(0.1)  # 10% の速度
-            # self.xarm.set_max_acceleration_scaling_factor(0.1)  # 10% の加速度
             self.xarm.stop()
-
-            # ゴールの設定(関節角度で指定)0.01342425 -0.8442685  -0.29798153  0.03872918  1.15796757  0.03068345
-            #fixed_joint_values = [0.0027496605180203915, 0.104049913585186, -1.1940333843231201, 0.027469761669635773, 1.089946985244751, 0.008956530131399632]
-            fixed_joint_values = [0.002444781828671694, 0.07742192596197128, -1.2735952138900757, 0.02975347451865673, 1.1962307691574097, 0.010912355966866016]
-
-            # fixed_joint_values = [0.01342425, -0.6442685, -0.29798153, 0.03872918, 1.00, 0.03068345]
 
             # 現在のジョイント値（スタート状態）を取得して表示
             current_joint_values = self.xarm.get_current_joint_values()
             print(f"Current joint values (Start): {current_joint_values}")
-
-            # ゴール状態（目標ジョイント値）を表示
-            print(f"Target joint values (Goal): {fixed_joint_values}")
-
             # スタート状態を現在の状態に設定
             self.xarm.set_start_state_to_current_state()
-            self.xarm.set_start_state_to_current_state()
-            
 
+            # ゴール状態（目標ジョイント値）を表示
+            print(f"Target joint values (Goal): {goal_joint_values}")
             # ゴール状態を設定
-            self.xarm.set_joint_value_target(fixed_joint_values)
+            self.xarm.set_joint_value_target(goal_joint_values)
 
             # プランニング
-            success, plan, _, _ = self.xarm.plan()
-            if not success:
-                print("Planning failed.")
-                return "loop"
+            success_plan, plan, _, _ = self.xarm.plan()
 
-            print("Planning succeeded. Executing plan...")
-            success_exec = self.xarm.execute(plan)
-            if success_exec:
-                rospy.loginfo("Picking work Successfully")
-                return "success"
+            if success_plan:
+                rospy.loginfo('Planning succeeded, executing plan')
+                success_execute = self.xarm.execute(plan)
+                if success_execute is True:
+                    rospy.loginfo('Going back to start point')
+                    self.try_count = 0
+                    return 'success'
+                else:
+                    self.try_count = 0
+                    return 'failure'
             else:
-                print("Execution failed.")
-                return "loop"
+                print("Planning failed.")
+                if self.try_count < 3:
+                    self.try_count += 1
+                    return 'loop'
+                
+                self.try_count = 0
+                return 'failure'
         except Exception as e:
-            print(f"Error in execute: {e}")
-            return "loop"
+            print(e)
+            self.try_count = 0
+            return 'failure'
