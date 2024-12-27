@@ -3,6 +3,7 @@
 
 import os
 import sys
+import select
 import rospy
 import rosparam
 import rospkg
@@ -217,8 +218,8 @@ class PickWork(smach.State):
 
         # settings
         # xarmの速度と加速度を設定
-        self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
-        self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
+        # self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
+        # self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
         env = rospy.get_param("env", "task1")
 
         print("------------------------------------")
@@ -235,11 +236,35 @@ class PickWork(smach.State):
         self.frame_id = None
         rospy.set_param('/posture_estimation_done', False)
         start_time = rospy.Time.now()
-        while self.frame_id is None:
-            if (rospy.Time.now() - start_time).to_sec() > wait_timeout:
-                rospy.logerr("Failed to receive 'Posture_of_object' transform.")
-                return 'failure'
-            rospy.sleep(0.1)
+        ################
+        #　姿勢を受け取るまでまつ（変更前）
+        ################
+        # while self.frame_id is None:
+        #     if (rospy.Time.now() - start_time).to_sec() > wait_timeout:
+        #         rospy.logerr("Failed to receive 'Posture_of_object' transform.")
+        #         return 'failure'
+        #     rospy.sleep(0.1)
+        ################
+        #　エンターを押すまでまつ（変更後）
+        ################
+        key = ''  # 初期値を設定
+
+        try:
+            while True:
+                # リターンキーが押されたか確認
+                # print("Press Enter to exit posture estimation loop or Ctrl+C to terminate...")
+                if select.select([sys.stdin], [], [], 0)[0]:  # 入力がある場合
+                    key = sys.stdin.read(1)  # キーを取得
+                    if key == '\n':  # Enterキーが押された
+                        rospy.loginfo("Detected Enter key press. Exiting loop.")
+                        break  # ループを抜ける
+                # 必要なら短時間待機
+                rospy.sleep(0.1)
+
+        except KeyboardInterrupt:
+            # rospy.loginfo("Detected Ctrl+C. Exiting loop.")
+            return 'failure'
+
         # Set the posture estimation flag to True
         rospy.set_param('/posture_estimation_done', True)
         rospy.loginfo("Received 'Posture_of_object' transform.")
@@ -507,8 +532,8 @@ class PICK_BACK(smach.State):
         rospy.loginfo(f"Planning pipeline: {self.pipeline}")
         # settings
         # xarmの速度と加速度を設定
-        self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
-        self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
+        # self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
+        # self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
         start_phase = rospy.get_param("start_phase", "Initial_Phase")
         rospy.set_param("phase", start_phase)
         rospy.loginfo(f"Phase: {start_phase}")

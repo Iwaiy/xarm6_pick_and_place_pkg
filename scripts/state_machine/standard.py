@@ -15,7 +15,7 @@ class InitialSettings(smach.State):
     # Initialize any variables or resources here
     def __init__(self, outcomes):
         smach.State.__init__(self, outcomes=outcomes)
-        # self.gripper = GraspControl()
+        self.gripper = GraspControl()
 
     def execute(self, userdata):
         # Implement the logic for the Wait4Start state here
@@ -32,8 +32,9 @@ class InitialSettings(smach.State):
 
         # あとで消す
         rospy.set_param("use_pathseed", True)
-
+        self.gripper.close()
         input("Start>>>")
+        rospy.sleep(10)
         # self.gripper.open()
         return 'success'
     

@@ -82,8 +82,8 @@ class PlaceWork(smach.State):
     def execute(self, userdata):
         # settings
         # xarmの速度と加速度を設定
-        self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
-        self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
+        # self.xarm.set_max_velocity_scaling_factor(0.5)  # 50% の速度
+        # self.xarm.set_max_acceleration_scaling_factor(0.25)  # 25% の加速度
         self.msg = None
         self.is_finish_task = False
         env = rospy.get_param("env", "task1")

@@ -72,7 +72,7 @@
           cwd="node"/>
 
     <!-- ################### Pathseed Publisher ################### -->
-    <node name="pathseed_pub" pkg="xarm6_pick_and_place_pkg" type="pathseed_pub.py"/>
+    <!-- <node name="pathseed_pub" pkg="xarm6_pick_and_place_pkg" type="pathseed_pub.py"/> -->
     
     <!-- ################### Task Nodes ################### -->
     <node name="task_node" pkg="xarm6_pick_and_place_pkg" type="task_node.py" output="screen">
