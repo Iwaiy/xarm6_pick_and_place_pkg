@@ -32,6 +32,7 @@ import tf.transformations as tft
 from node.grasp_control import GraspControl
 
 from tf.transformations import quaternion_from_euler, quaternion_multiply
+import threading
 
 rospack = rospkg.RosPack()
 package_path = rospack.get_path('xarm6_pick_and_place_pkg')  # パッケージ名を指定
@@ -69,7 +70,7 @@ class PickWork(smach.State):
 
         #TFブロードキャスト
         self.br = tf2_ros.StaticTransformBroadcaster()
-        self.tf_subscriber = rospy.Subscriber("/tf_static", TFMessage, self.tf_static_callback, queue_size=100000)
+        self.tf_subscriber = rospy.Subscriber("/tf", TFMessage, self.tf_static_callback, queue_size=10)
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         self.tf_buffer.clear()
@@ -114,6 +115,7 @@ class PickWork(smach.State):
     def tf_static_callback(self, msg):
         # TFメッセージを受信した際に呼ばれる
         # rospy.loginfo("Received TF static message")
+        self.tf_buffer.clear()
         if self.frame_id is not None:
             return
         self.target_pose = Pose()
@@ -125,6 +127,7 @@ class PickWork(smach.State):
                 # Directly set the target_pose from the transform data
                 self.target_pose.position = transform.transform.translation
                 self.target_pose.orientation = transform.transform.rotation
+                # rospy.loginfo(f"TF: {self.target_pose}")
 
     def transform_pose(self, source_pose, source_frame, target_frame):
         """
@@ -148,7 +151,7 @@ class PickWork(smach.State):
             # Wait for the transform to be available
             rospy.loginfo(f"Waiting for transform from {source_frame} to {target_frame}")
             listener.waitForTransform(target_frame, source_frame, time=rospy.Time(0), timeout=rospy.Duration(10))  # Adjust the wait duration as needed
-            rospy.sleep(0.1)
+
 
             # Transform the pose to the target frame
             transformed_pose_stamped = listener.transformPose(target_frame, source_pose_stamped)
@@ -215,6 +218,7 @@ class PickWork(smach.State):
         # init
         self.try_count = 0
         self.msg = None
+        rospy.sleep(1)
 
         # settings
         # xarmの速度と加速度を設定
@@ -226,45 +230,36 @@ class PickWork(smach.State):
         print("Executing PickWork")
         # 姿勢推定によるtargetのPose取得 (Recognition)
         ################################################################################################################################
-        
-        # Wait for the posture of object transform for 10 seconds
-        wait_timeout = 20
-        rospy.loginfo("Waiting for the posture of object transform...")
         # Initialize the posture estimation flag
         ### False :: 認識を行う
         ### True :: 認識を行わない
+        # Wait for the posture of object transform for 10 seconds
         self.frame_id = None
+        threading.Thread(target=rospy.spin).start()
         rospy.set_param('/posture_estimation_done', False)
         start_time = rospy.Time.now()
         ################
         #　姿勢を受け取るまでまつ（変更前）
         ################
-        # while self.frame_id is None:
+        # self.frame_id = None
+        # self.target_pose = None
+        # wait_timeout = 20
+        # while self.target_pose is None:
         #     if (rospy.Time.now() - start_time).to_sec() > wait_timeout:
         #         rospy.logerr("Failed to receive 'Posture_of_object' transform.")
         #         return 'failure'
-        #     rospy.sleep(0.1)
+        #     rospy.sleep(0.001)
         ################
         #　エンターを押すまでまつ（変更後）
         ################
         key = ''  # 初期値を設定
-
-        try:
-            while True:
-                # リターンキーが押されたか確認
-                # print("Press Enter to exit posture estimation loop or Ctrl+C to terminate...")
-                if select.select([sys.stdin], [], [], 0)[0]:  # 入力がある場合
-                    key = sys.stdin.read(1)  # キーを取得
-                    if key == '\n':  # Enterキーが押された
-                        rospy.loginfo("Detected Enter key press. Exiting loop.")
-                        break  # ループを抜ける
-                # 必要なら短時間待機
-                rospy.sleep(0.1)
-
-        except KeyboardInterrupt:
-            # rospy.loginfo("Detected Ctrl+C. Exiting loop.")
-            return 'failure'
-
+        if select.select([sys.stdin], [], [], 0)[0]:
+            key = sys.stdin.read(1)
+            if key == '\n':  # Enterキーが押された
+                rospy.loginfo("Enter key detected. Capturing TF data...")
+        else:
+            return 'loop'
+            
         # Set the posture estimation flag to True
         rospy.set_param('/posture_estimation_done', True)
         rospy.loginfo("Received 'Posture_of_object' transform.")
@@ -299,8 +294,8 @@ class PickWork(smach.State):
         # Move to Target Position with offset
         ################################################################################################################################
         finger = 17  ###   finger size 0~40mm (0~15mm)
-        offset_x = 32 * np.cos(np.radians((-transformed_euler.z + 90)))   ###  grasp at the position of x axis + 40mm  (T joint pipe)
-        offset_y = 32 - 32 * np.sin(np.radians((-transformed_euler.z + 90)))   ##   realsense   https://github.com/IntelRealSense/realsense-ros
+        offset_x = 35 * np.cos(np.radians((-transformed_euler.z + 90)))   ###  grasp at the position of x axis + 40mm  (T joint pipe)
+        offset_y = 32 - 35 * np.sin(np.radians((-transformed_euler.z + 90)))   ##   realsense   https://github.com/IntelRealSense/realsense-ros
         offset_z = -finger  ##  Gripper size 160~170mm
         #offset_yaw = 90
         #rospy.loginfo(f"{np.cos(np.radians(transformed_euler.z + 90))}")
@@ -438,7 +433,6 @@ class PickWork(smach.State):
             self.xarm.set_start_state_to_current_state()
             self.xarm.set_pose_target(target_pose)
 
-        rospy.sleep(3)
         rospy.loginfo("Planning...")
         # プランニング
         try:
@@ -544,6 +538,7 @@ class PICK_BACK(smach.State):
             rospy.loginfo(f"Stomp parameters: {stomp_params}")
         
         goal_joint_values = self.params[env]["Joint"]["Start"]["Cspace"]
+        place_joint_values = [0.003787015099078417, 0.4829105734825134, -1.5604994297027588, 0.031504131853580475, 1.0776253938674927, 0.008419636636972427]
         
         if self.pipeline == "stomp" and rospy.get_param("use_pathseed", False) is True:
             # specify the pathseed file
@@ -561,6 +556,14 @@ class PICK_BACK(smach.State):
 
         try:
             self.xarm.stop()
+            
+            # place point の設定
+            # self.xarm.set_start_state_to_current_state()
+            # self.xarm.set_joint_value_target(place_joint_values)
+            # # プランニング
+            # success_plan, plan, _, _ = self.xarm.plan()
+            # success_execute = self.xarm.execute(plan)
+            # self.gripper.open()
 
             # 現在のジョイント値（スタート状態）を取得して表示
             current_joint_values = self.xarm.get_current_joint_values()

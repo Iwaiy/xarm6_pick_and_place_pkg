@@ -50,21 +50,27 @@ class PathseedsEncoderStateMachine:
                 pick_work.PICK_BACK(['success', 'failure', 'loop']),
                 transitions={'success': 'PLACE_WORK', 'loop': 'PICK_BACK', 'failure': 'exit'}
             )
-            smach.StateMachine.add(
-                'PLACE_WORK', 
-                place_work.PlaceWork(['finish', 'failure', 'loop', 'update']),
-                transitions={'finish': 'InitialSettings', 'failure': 'exit', 'loop': 'PLACE_WORK', 'update': 'UPDATE_PATHSEED'}
-            )
+            
             # smach.StateMachine.add(
-            #     'PLACE_BACK',
-            #     place_work.PLACE_BACK(['success', 'failure', 'loop']),
-            #     transitions={'success': 'START', 'loop': 'PLACE_BACK', 'failure': 'exit'}
+            #     'PLACE_WORK', 
+            #     place_work.PlaceWork(['finish', 'failure', 'loop', 'update']),
+            #     transitions={'finish': 'InitialSettings', 'failure': 'exit', 'loop': 'PLACE_WORK', 'update': 'UPDATE_PATHSEED'}
             # )
             smach.StateMachine.add(
-                'UPDATE_PATHSEED',
-                update_pathseed.UpdatePathSeed(['success', 'failure']),
-                transitions={'success': 'START', 'failure': 'exit'}
+                'PLACE_WORK', 
+                place_work.PlaceWork(['success', 'failure', 'loop']),
+                transitions={'success': 'PLACE_BACK', 'failure': 'exit', 'loop': 'PLACE_WORK'}
             )
+            smach.StateMachine.add(
+                'PLACE_BACK',
+                place_work.PLACE_BACK(['success', 'failure', 'loop']),
+                transitions={'success': 'PICK_WORK', 'loop': 'PLACE_BACK', 'failure': 'exit'}
+            )
+            # smach.StateMachine.add(
+            #     'UPDATE_PATHSEED',
+            #     update_pathseed.UpdatePathSeed(['success', 'failure']),
+            #     transitions={'success': 'START', 'failure': 'exit'}
+            # )
             smach.StateMachine.add(
                 'exit',
                 standard.Exit(['success', 'failure']),
