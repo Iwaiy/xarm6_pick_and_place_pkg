@@ -1,7 +1,7 @@
 # Xarm6_pick_and_place_pkg
 ### プログラム変更点（把持姿勢（TF）の定義）
 pick_work.py
-'''
+"""
 class PickWork(smach.State):
     def __init__(self, outcomes):
         # Declare input_keys and output_keys
@@ -445,4 +445,4 @@ class PickWork(smach.State):
         self.gripper.close()
 
         return 'success'
-'''
+"""
